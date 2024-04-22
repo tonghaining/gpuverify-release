@@ -1,0 +1,8 @@
+includedir=/home/travis/build/mc-imperial/gpuverify/libclc-install/include
+libexecdir=/home/travis/build/mc-imperial/gpuverify/libclc-install/lib/clc
+
+Name: libclc
+Description: Library requirements of the OpenCL C programming language
+Version: 0.2.0
+Cflags: -I${includedir}
+Libs: -L${libexecdir}
