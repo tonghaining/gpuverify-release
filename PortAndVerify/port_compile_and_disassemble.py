@@ -6,6 +6,7 @@ SPV_DISASSEMBLY_FOLDER = "../latest_benchmarks/spv-dis/"
 CLSPV_PATH = os.environ["CLSPV_PATH"]
 SPIRV_DIS_PATH = os.environ["SPIRVi_DIS_PATH"]
 FILE_MAP_TXT = "./port-result.txt"
+NO_GPUVERIFY_SPECIFIC_FEATURE = "./no_gpuverify_specific_feature.txt"
 
 
 class PortingError(Exception):
@@ -133,20 +134,39 @@ def add_header(opencl_file, dis_assembly_file):
     with open(dis_assembly_file, "w") as f:
         f.write(disassemble_content)
 
+
+def without_gpuverify_specific_feature(test):
+    with open(test, "r") as f:
+        content = f.read()
+    if "assert" in content:
+        return False
+    if "invariant" in content:
+        return False
+    if "requires" in content:
+        return False
+    if "assume" in content:
+        return False
+    return True
+
+
 def check_support(test):
     with open(test, "r") as f:
         content = f.read()
     if "float" in content:
         return False
-    return True
+    return without_gpuverify_specific_feature(test)
+
 
 def port_test():
     tests = get_opencl_tests(OPENCL_TESTSUITE_FOLDER)
     print(f"Total tests of gpu-verify: {len(tests)}")
     succeed_tests = {}
+    general_tests = []
     for test in tests:
         if not check_support(test):
             continue
+        if without_gpuverify_specific_feature(test):
+            general_tests.append(test)
         test_name, test_dir = tests[test]
         base_dir = os.path.join(SPV_DISASSEMBLY_FOLDER, test_dir)
         os.makedirs(base_dir, exist_ok=True)
@@ -166,16 +186,25 @@ def port_test():
             continue
         succeed_tests[test] = dis_assembly_file
 
-    return succeed_tests
+    return succeed_tests, general_tests
 
 
 def main():
-    ported_tests = port_test()
+    ported_tests, general_tests = port_test()
     print(f"Succeed tests: {len(ported_tests)}")
+    print(f"General tests: {len(general_tests)}")
     with open(FILE_MAP_TXT, "w") as f:
         for test in ported_tests:
             f.write(f"{test} {ported_tests[test]}\n")
+    with open(NO_GPUVERIFY_SPECIFIC_FEATURE, "w") as f:
+        for test in general_tests:
+            f.write(f"{test}\n")
 
 
 if __name__ == "__main__":
     main()
+
+# Output:
+#Total tests of gpu-verify: 486
+# Succeed tests: 186
+# General tests: 217
