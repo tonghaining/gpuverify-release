@@ -2,7 +2,8 @@ import os
 import subprocess
 
 OPENCL_TESTSUITE_FOLDER = "../latest_benchmarks/OpenCL/"
-SPV_DISASSEMBLY_FOLDER = "../latest_benchmarks/spv-dis/"
+CLSPV_SPV_DISASSEMBLY_FOLDER = "../latest_benchmarks/spv-dis/clspv/"
+CLANG_SPV_DISASSEMBLY_FOLDER = "../latest_benchmarks/spv-dis/clang/"
 CLSPV_PATH = os.environ["CLSPV_PATH"]
 SPIRV_DIS_PATH = os.environ["SPIRVi_DIS_PATH"]
 FILE_MAP_TXT = "./port-result.txt"
@@ -44,6 +45,28 @@ def disassemble_with_spirv_dis(input_file, output_file):
         return 1
     return 0
 
+
+def compile_with_clang(input_file, output_file):
+    command = ["clang", "-x", "cl", "-cl-std=CL2.0", "-target", "spir-unknown-unknown", "-emit-llvm", "-c", input_file, "-o", output_file]
+    # command = ["clang", "-x", "cl", "-cl-std=CL2.0", "-target", "spir64-unknown-unknown", "-emit-llvm", "-c", input_file, "-o", output_file]
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode != 0:
+        return 1
+    return 0
+
+def convert_bitcode_to_spirv(input_file, output_file):
+    command = ["llvm-spirv", input_file, "-o", output_file]
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode != 0:
+        return 1
+    return 0
+
+def disassemble_with_spirv_dis(input_file, output_file):
+    command = ["spirv-dis", input_file, "-o", output_file]
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode != 0:
+        return 1
+    return 0
 
 def get_config_header(config_dict):
     # If the header of a .cl test has --num_groups=1, then use grid 3,1,1
@@ -157,7 +180,7 @@ def check_support(test):
     return without_gpuverify_specific_feature(test)
 
 
-def port_test():
+def port_test_with_clspv():
     tests = get_opencl_tests(OPENCL_TESTSUITE_FOLDER)
     print(f"Total tests of gpu-verify: {len(tests)}")
     succeed_tests = {}
@@ -168,7 +191,7 @@ def port_test():
         if without_gpuverify_specific_feature(test):
             general_tests.append(test)
         test_name, test_dir = tests[test]
-        base_dir = os.path.join(SPV_DISASSEMBLY_FOLDER, test_dir)
+        base_dir = os.path.join(CLSPV_SPV_DISASSEMBLY_FOLDER, test_dir)
         os.makedirs(base_dir, exist_ok=True)
         spv_file = os.path.join(base_dir, test_name + ".spv")
         dis_assembly_file = os.path.join(base_dir, test_name + ".spv.dis")
@@ -188,9 +211,46 @@ def port_test():
 
     return succeed_tests, general_tests
 
+def port_test_with_clang():
+    tests = get_opencl_tests(OPENCL_TESTSUITE_FOLDER)
+    print(f"Total tests of gpu-verify: {len(tests)}")
+    succeed_tests = {}
+    general_tests = []
+    for test in tests:
+        if not check_support(test):
+            continue
+        if without_gpuverify_specific_feature(test):
+            general_tests.append(test)
+        test_name, test_dir = tests[test]
+        base_dir = os.path.join(CLANG_SPV_DISASSEMBLY_FOLDER, test_dir)
+        base_dir = os.path.split(base_dir)[0]
+        os.makedirs(base_dir, exist_ok=True)
+        bitcode_file = os.path.join(base_dir, test_name + ".bc")
+        spv_file = os.path.join(base_dir, test_name + ".spv")
+        dis_assembly_file = os.path.join(base_dir, test_name + ".spv.dis")
+        compile_res = compile_with_clang(test, bitcode_file)
+        if compile_res != 0:
+            continue
+        convert_res = convert_bitcode_to_spirv(bitcode_file, spv_file)
+        if convert_res != 0:
+            continue
+        subprocess.run(["rm", bitcode_file])
+        disassemble_res = disassemble_with_spirv_dis(spv_file, dis_assembly_file)
+        if disassemble_res != 0:
+            continue
+        subprocess.run(["rm", spv_file])
+        try:
+            add_header(test, dis_assembly_file)
+        except PortingError as _:
+            subprocess.run(["rm", dis_assembly_file])
+            continue
+        succeed_tests[test] = dis_assembly_file
+
+    return succeed_tests, general_tests
 
 def main():
-    ported_tests, general_tests = port_test()
+    # ported_tests, general_tests = port_test_with_clspv()
+    ported_tests, general_tests = port_test_with_clang()
     print(f"Succeed tests: {len(ported_tests)}")
     print(f"General tests: {len(general_tests)}")
     with open(FILE_MAP_TXT, "w") as f:
